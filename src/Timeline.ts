@@ -2,6 +2,7 @@ import { applyBudget, type BudgetCard } from './cards/budget';
 import { CardLayer, type CardRequest } from './cards/CardLayer';
 import { dodge } from './cards/dodge';
 import { computeReveal } from './cards/reveal';
+import { DateFormats, sampleTicks } from './core/dateFormat';
 import { ItemIndex } from './core/ItemIndex';
 import { Viewport } from './core/Viewport';
 import { Gestures } from './interaction/Gestures';
@@ -10,7 +11,14 @@ import { assignLanes } from './layout/lanes';
 import { HiDpiCanvas } from './render/canvas';
 import { ConnectorRenderer, type Connector } from './render/ConnectorRenderer';
 import { Minimap } from './render/Minimap';
-import { connectorX, TimelineRenderer, type NormalizedBand, type TrackGeometry } from './render/TimelineRenderer';
+import {
+  AXIS_FONT_SIZE,
+  connectorX,
+  TimelineRenderer,
+  type AxisText,
+  type NormalizedBand,
+  type TrackGeometry,
+} from './render/TimelineRenderer';
 import { injectStyles, THEME_VARS } from './styles';
 import type {
   CardLod,
@@ -51,19 +59,22 @@ const PROMOTE_HYSTERESIS = 0.7;
 /** Time constant for easing out layout jumps, ms (~95% settled after 3τ). */
 const JUMP_TAU = 100;
 
-const dateFormat = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+/** Space around axis labels: from the left edge, and to the tick marks. */
+const AXIS_LABEL_PADDING = 22;
+const MIN_AXIS_WIDTH = 48;
 
-const defaultRenderCard: RenderCard = (item, el, lod) => {
+/** The card used without a renderCard option: date (in the timeline's locale) and title. */
+function renderDefaultCard(item: TimelineItem, el: HTMLElement, lod: CardLod, dates: Intl.DateTimeFormat): void {
   const date = document.createElement('div');
   date.className = 'vt-card__date';
   date.textContent = item.end !== undefined
-    ? `${dateFormat.format(toMs(item.start))} – ${dateFormat.format(toMs(item.end))}`
-    : dateFormat.format(toMs(item.start));
+    ? dates.formatRange(toMs(item.start), toMs(item.end))
+    : dates.format(toMs(item.start));
   const title = document.createElement('div');
   title.className = 'vt-card__title';
   title.textContent = item.title;
   el.append(...(lod === 'full' ? [date, title] : [title]));
-};
+}
 
 type Listener<T> = (payload: T) => void;
 type CardCandidate = BudgetCard & CardRequest;
@@ -83,10 +94,16 @@ export class VerticalTimeline {
   private gestures: Gestures;
   private resizeObserver: ResizeObserver;
 
-  private opts: Required<Omit<TimelineOptions, 'items' | 'storylines' | 'bands' | 'theme' | 'colorScheme' | 'renderCard'>>;
+  private opts: Required<
+    Omit<TimelineOptions, 'items' | 'storylines' | 'bands' | 'theme' | 'colorScheme' | 'renderCard' | 'locale' | 'formatTick'>
+  >;
   /** Canvas colours, read from CSS variables; shared by reference with the renderers. */
   private theme: TimelineTheme = { ...DEFAULT_THEME };
   private themeOverrides: Partial<TimelineTheme>;
+  private formats: DateFormats;
+  private customFormatTick: TimelineOptions['formatTick'];
+  /** Axis text settings; shared by reference with the renderer. */
+  private text: AxisText;
   private darkQuery: MediaQueryList | null =
     typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
   /** Whether the theme was read while attached to the document (else CSS vars were unavailable). */
@@ -126,7 +143,7 @@ export class VerticalTimeline {
     injectStyles();
     this.opts = {
       minimapWidth: options.minimapWidth ?? 56,
-      axisWidth: options.axisWidth ?? 76,
+      axisWidth: options.axisWidth ?? 'auto',
       gutterWidth: options.gutterWidth ?? 72,
       cardGap: options.cardGap ?? 8,
       anchorOffset: options.anchorOffset ?? 18,
@@ -137,6 +154,9 @@ export class VerticalTimeline {
       minMsPerPx: options.minMsPerPx ?? 1_000,
     };
     this.themeOverrides = options.theme ?? {};
+    this.formats = new DateFormats(options.locale);
+    this.customFormatTick = options.formatTick;
+    this.text = { formatTick: this.customFormatTick ?? this.formats.formatTick, locale: this.formats.locale };
     this.viewport = new Viewport(this.opts.minMsPerPx);
 
     this.root = document.createElement('div');
@@ -159,9 +179,11 @@ export class VerticalTimeline {
     this.darkQuery?.addEventListener('change', this.refreshTheme);
     this.watchPixelRatio();
 
-    this.timelineRenderer = new TimelineRenderer(this.timelineCanvas, this.theme);
+    this.timelineRenderer = new TimelineRenderer(this.timelineCanvas, this.theme, this.text);
     this.connectorRenderer = new ConnectorRenderer(this.connectorCanvas, this.theme);
-    this.cards = new CardLayer(this.body, options.renderCard ?? defaultRenderCard, this.invalidate, (id) => this.setHover(id));
+    const renderCard: RenderCard =
+      options.renderCard ?? ((item, el, lod) => renderDefaultCard(item, el, lod, this.formats.cardDate));
+    this.cards = new CardLayer(this.body, renderCard, this.invalidate, (id) => this.setHover(id));
 
     this.gestures = new Gestures(
       this.root,
@@ -334,6 +356,24 @@ export class VerticalTimeline {
     return () => set.delete(fn);
   }
 
+  /**
+   * Switches the language of axis labels and default cards (BCP 47 tags;
+   * undefined = the browser's language). Mounted cards are re-rendered, so a
+   * custom renderCard that reads `timeline.locale` updates too.
+   */
+  setLocale(locale?: string | string[]): void {
+    this.formats = new DateFormats(locale);
+    this.text.formatTick = this.customFormatTick ?? this.formats.formatTick;
+    this.text.locale = this.formats.locale;
+    this.cards.refresh();
+    this.layout(); // label widths change with the language
+  }
+
+  /** The resolved locale in use, e.g. 'de-DE'. */
+  get locale(): string {
+    return this.formats.locale;
+  }
+
   /** 'light' or 'dark' forces a palette; 'auto' follows the OS setting. */
   setColorScheme(scheme: ColorScheme): void {
     if (scheme === 'auto') delete this.root.dataset.theme;
@@ -425,7 +465,8 @@ export class VerticalTimeline {
 
   private layout(): void {
     if (!this.themeFromDocument) this.refreshTheme();
-    const { minimapWidth, axisWidth, gutterWidth } = this.opts;
+    const { minimapWidth, gutterWidth } = this.opts;
+    const axisWidth = this.opts.axisWidth === 'auto' ? this.autoAxisWidth() : this.opts.axisWidth;
     const rect = this.root.getBoundingClientRect();
     const height = rect.height;
     const mainWidth = Math.max(0, rect.width - minimapWidth);
@@ -447,6 +488,17 @@ export class VerticalTimeline {
     this.cardsWidth = cardsWidth;
     this.viewport.setHeight(height);
     this.invalidate();
+  }
+
+  /** Axis width that fits the widest label of the current locale (and font). */
+  private autoAxisWidth(): number {
+    const ctx = this.timelineCanvas.ctx;
+    ctx.font = `${AXIS_FONT_SIZE}px ${this.theme.font}`;
+    let widest = 0;
+    for (const [date, unit] of sampleTicks()) {
+      widest = Math.max(widest, ctx.measureText(this.text.formatTick(date, unit)).width);
+    }
+    return Math.max(MIN_AXIS_WIDTH, Math.ceil(widest) + AXIS_LABEL_PADDING);
   }
 
   /**

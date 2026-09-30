@@ -1,4 +1,5 @@
 import { scaleTime } from 'd3-scale';
+import { tickUnit, type FormatTick } from '../core/dateFormat';
 import type { Viewport } from '../core/Viewport';
 import type { StorylineColumn } from '../layout/storylines';
 import type { Item, TimelineTheme } from '../types';
@@ -22,7 +23,16 @@ export interface TrackGeometry {
   gridRight: number;
 }
 
+/** Text settings shared by reference with the timeline, which updates them on setLocale(). */
+export interface AxisText {
+  formatTick: FormatTick;
+  /** Resolved locale, for locale-aware casing of band labels. */
+  locale: string;
+}
+
 export const POINT_R = 4;
+/** Axis label font size, px; the timeline measures labels with it to size the axis. */
+export const AXIS_FONT_SIZE = 11;
 const LABEL_FONT_SIZE = 11;
 /** Keep sticky storyline labels this far inside the viewport / rail ends. */
 const LABEL_INSET = 8;
@@ -57,6 +67,7 @@ export class TimelineRenderer {
   constructor(
     private canvas: HiDpiCanvas,
     private theme: TimelineTheme,
+    private text: AxisText,
   ) {}
 
   draw(
@@ -90,7 +101,7 @@ export class TimelineRenderer {
         ctx.globalAlpha = 0.7;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'top';
-        ctx.fillText(b.label.toUpperCase(), geo.gridRight - 8, Math.max(y0, 0) + 4);
+        ctx.fillText(b.label.toLocaleUpperCase(this.text.locale), geo.gridRight - 8, Math.max(y0, 0) + 4);
         ctx.restore();
       }
     }
@@ -100,7 +111,8 @@ export class TimelineRenderer {
     const majorCount = Math.max(2, Math.floor(h / 90));
     const major = scale.ticks(majorCount);
     const minor = scale.ticks(majorCount * 5);
-    const format = scale.tickFormat(majorCount);
+    // d3 only picks tick positions; labels come from the locale-aware formatter.
+    const step = major.length > 1 ? major[1].getTime() - major[0].getTime() : Infinity;
 
     ctx.lineWidth = 1;
     ctx.strokeStyle = theme.gridMinor;
@@ -121,11 +133,11 @@ export class TimelineRenderer {
     }
     ctx.stroke();
 
-    ctx.font = `11px ${theme.font}`;
+    ctx.font = `${AXIS_FONT_SIZE}px ${theme.font}`;
     ctx.fillStyle = theme.axisText;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    for (const d of major) ctx.fillText(format(d), geo.axisWidth - 12, scale(d));
+    for (const d of major) ctx.fillText(this.text.formatTick(d, tickUnit(d, step)), geo.axisWidth - 12, scale(d));
 
     // Main lane spine, full height.
     const cols = geo.columns;

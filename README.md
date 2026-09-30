@@ -10,6 +10,7 @@ A vertical timeline rendered on canvas, with rich HTML cards linked to their dat
 - **Momentary and spanning events**, **background bands**, a **minimap**, and **storylines**: sets of connected events drawn as rails that reuse lanes over time.
 - Scroll, drag with inertia, and zoom with pinch or ctrl/⌘ + wheel; click to select; keyboard support.
 - Light and dark themes via CSS variables, including the canvas colours.
+- Dates in any language: axis labels and default cards use `Intl`, so month and weekday names, date order, 12- or 24-hour clock and digits follow the locale.
 
 ```
 ┌─────────┬──────────────────────┬───┬───────────────────────────┐
@@ -89,6 +90,8 @@ The container needs a height (the timeline fills it), e.g. `#timeline { height: 
 | `bands` | `TimelineBand[]` | `[]` | Background ranges. |
 | `renderCard` | `RenderCard` | title + date | Renders a card's content; see [Cards](#cards). |
 | `colorScheme` | `'auto' \| 'light' \| 'dark'` | `'auto'` | `auto` follows the OS setting. |
+| `locale` | `string \| string[]` | browser language | BCP 47 tag(s) for dates on the axis and default cards, e.g. `'de-DE'`; see [Localization](#localization). |
+| `formatTick` | `(date, unit) => string` | locale default | Custom axis labels; see [Localization](#localization). |
 | `theme` | `Partial<TimelineTheme>` | from CSS | Canvas colour overrides; see [Styling](#styling). |
 | `cardDensity` | `number` | `1.25` | How many cards to show at a given zoom. `1` = cards never overlap at their dates; higher shows more cards and lets them push each other further. |
 | `maxDisplacement` | `number` | `0.5` | Furthest a card may be pushed from its date, in viewport heights, before it shrinks or hides. |
@@ -97,7 +100,7 @@ The container needs a height (the timeline fills it), e.g. `#timeline { height: 
 | `estimatedFullHeight` | `number` | `120` | Card height guess used before a card is measured, px. Per item: `estimatedHeight`. |
 | `estimatedCompactHeight` | `number` | `34` | Same, for compact cards. |
 | `minimapWidth` | `number` | `56` | px |
-| `axisWidth` | `number` | `76` | Width of the date axis, px. |
+| `axisWidth` | `number \| 'auto'` | `'auto'` | Width of the date axis, px. `'auto'` fits the locale's widest label. |
 | `gutterWidth` | `number` | `72` | Space for connectors between track and cards, px. |
 | `minMsPerPx` | `number` | `1000` | Zoom-in limit, milliseconds per pixel. |
 
@@ -149,6 +152,8 @@ interface TimelineBand {
 | `focusStoryline(id)` | Zoom to fit a storyline. |
 | `setStorylineVisible(id, visible)` / `isStorylineVisible(id)` | Hide or show a storyline's events and cards. A hidden storyline frees its lane. Hiding the selected event's storyline clears the selection. |
 | `setColorScheme('auto' \| 'light' \| 'dark')` | Switch the palette. |
+| `setLocale(locale?)` | Switch the date language; mounted cards are re-rendered. `undefined` = the browser's language. |
+| `locale` | The resolved locale in use, e.g. `'de-DE'` (getter). |
 | `refreshTheme()` | Re-read canvas colours from CSS variables. Needed only when you change the variables yourself (the colour scheme, the OS setting and first attachment to the document are handled). |
 | `on(event, fn)` | Subscribe; returns an unsubscribe function. |
 | `destroy()` | Remove the timeline and all listeners. |
@@ -181,6 +186,34 @@ renderCard(item, el, lod) {
 ```
 
 Cards are virtualized: only cards near the viewport exist, and elements are reused. Keep per-card state in your own store rather than in the element. Card height can be anything, and changes (e.g. images loading) are picked up automatically. Clicks on links, buttons and inputs inside a card work normally and don't select the card.
+
+## Localization
+
+Axis labels and the default card's dates are formatted with `Intl.DateTimeFormat`, so any locale the browser supports works with no extra data. That covers month and weekday names, date order ("Feb 7", "7. Feb.", "2月7日"), 12- or 24-hour time and digits (e.g. Arabic-Indic).
+
+```ts
+const timeline = new VerticalTimeline(el, { items, locale: 'fr-FR' });
+timeline.setLocale('ja-JP');     // switch at runtime
+timeline.setLocale(undefined);   // back to the browser's language
+```
+
+Each axis tick is labelled by the largest calendar boundary it falls on (`TickUnit`): a year boundary shows the year, a month boundary the month name, and so on. Day ticks show a weekday ("Sat 7"), or a date ("Feb 7") when ticks are a week or more apart (`'week'`). To take over the labels entirely:
+
+```ts
+type TickUnit = 'year' | 'month' | 'week' | 'day' | 'hour' | 'minute' | 'second' | 'millisecond';
+
+new VerticalTimeline(el, {
+  items,
+  formatTick: (date, unit) =>
+    unit === 'year' ? `’${String(date.getFullYear()).slice(2)}` : date.toLocaleDateString('pt-BR', { month: 'short' }),
+});
+```
+
+With `axisWidth: 'auto'` (the default) the axis is as wide as the locale's (or your `formatTick`'s) widest label at any zoom level, so it doesn't change width while zooming.
+
+Your own `renderCard` can use the same language via `timeline.locale`. `setLocale()` re-renders mounted cards, so they pick up the change. Band labels are upper-cased with the locale's rules (e.g. Turkish dotted İ). Storyline titles, band labels and card content are your text, so translate them yourself.
+
+Dates are placed and labelled in the browser's local time zone.
 
 ## Styling
 
@@ -261,7 +294,7 @@ Per animation frame, in this order (`src/Timeline.ts`):
    - **Easing jumps**: the layout only snaps when the card sequence changes: a point's date passes a span's card pinned near the top, a card mounts, or a card is resized. On those frames the previous sequence is laid out again at the current anchors, and the difference from the new layout becomes a per-card offset that decays (τ = 100ms). Cards sliding up go behind the others (z-index 0), and cards sliding down go in front (z-index 2).
 4. **Cards** (`cards/CardLayer.ts`): virtualized and pooled DOM. New cards are measured in one batch, and later size changes are picked up by `ResizeObserver`. Cards are positioned only with `transform`.
 5. **Storylines** (`layout/storylines.ts`): a storyline is a set of connected events, such as "World War II". It's drawn as a rail from its first event to its last, with its events on the rail, its spanning events in lanes beside it, and its title running down the rail. The title stays visible while the rail is on screen, and clicking it zooms to fit the storyline. Storylines are packed into shared lanes by time: a storyline takes the first lane whose previous storyline has already ended, so a lane is reused once a storyline is over. Events without a storyline sit in the main lane on the left, which spans all time. Hiding a storyline frees its lane; it only re-runs the lane packing and reveal thresholds, so items and measured card heights are kept. Items take their storyline's colour.
-6. **Canvases**: axis, grid, bands, spans and points (`render/TimelineRenderer.ts`; markers are batched into one path per colour); connectors (`render/ConnectorRenderer.ts`); and the minimap, whose density plot is cached and redrawn only when data or size changes (`render/Minimap.ts`). Colours come from the CSS variables (`styles.ts`). Canvases are re-sized when `devicePixelRatio` changes (moving to another display), via a `resolution` media query.
+6. **Canvases**: axis (d3-scale picks tick positions; labels come from `core/dateFormat.ts`), grid, bands, spans and points (`render/TimelineRenderer.ts`; markers are batched into one path per colour); connectors (`render/ConnectorRenderer.ts`); and the minimap, whose density plot is cached and redrawn only when data or size changes (`render/Minimap.ts`). Colours come from the CSS variables (`styles.ts`). Canvases are re-sized when `devicePixelRatio` changes (moving to another display), via a `resolution` media query.
 
 ## Not done yet
 
