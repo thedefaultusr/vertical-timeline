@@ -57,5 +57,6 @@
   "homepage": "https://thedefaultusr.github.io/vertical-timeline/",
   "bugs": {
     "url": "https://github.com/thedefaultusr/vertical-timeline/issues"
-  }
+  },
+  "license": "MIT"
 }
