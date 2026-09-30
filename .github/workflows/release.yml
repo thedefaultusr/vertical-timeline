@@ -1,0 +1,59 @@
+# Publishes the library to npm when a version tag is pushed:
+#
+#   npm version patch        # bumps package.json and creates tag vX.Y.Z
+#   git push --follow-tags
+#
+# Authentication uses npm trusted publishing (OIDC), so there is no token or
+# secret. Setup (once) on npmjs.com → package settings → Trusted publisher →
+# GitHub Actions: owner "thedefaultusr", repository "vertical-timeline",
+# workflow "release.yml".
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # create the GitHub release
+  id-token: write # OIDC token for npm trusted publishing (and provenance)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          # No dependency cache in the publishing job: a poisoned cache must
+          # not be able to reach a signed (provenance) release.
+
+      - run: npm ci
+
+      - name: Check the tag matches package.json
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${VERSION}"
+            exit 1
+          fi
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Publish to npm
+        run: |
+          # Prereleases (1.2.0-beta.1) go to the "next" dist-tag, not "latest".
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then TAG=next; else TAG=latest; fi
+          npm publish --provenance --access public --tag "$TAG"
+
+      - name: Create GitHub release
+        run: |
+          PRERELEASE=""
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then PRERELEASE="--prerelease"; fi
+          gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes $PRERELEASE
+        env:
+          GH_TOKEN: ${{ github.token }}
