@@ -171,6 +171,46 @@ describe('VerticalTimeline', () => {
     tl.destroy();
   });
 
+  it('switches the language of default cards at runtime', () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const tl = new VerticalTimeline(container, {
+      items: [{ id: 'a', start: new Date(2009, 1, 7), title: 'A' }],
+      locale: 'en-US',
+    });
+    run(tl);
+    const date = () => internals(tl).cards.get('a')!.el.querySelector('.vt-card__date')!.textContent;
+    expect(tl.locale).toBe('en-US');
+    expect(date()).toBe('Feb 7, 2009');
+
+    tl.setLocale('de-DE');
+    run(tl);
+    expect(tl.locale).toBe('de-DE');
+    expect(date()).toBe('7. Feb. 2009');
+    tl.destroy();
+  });
+
+  it('uses a custom formatTick for axis labels and sizes the axis to it', () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const labels: string[] = [];
+    const tl = new VerticalTimeline(container, {
+      items: sampleItems(),
+      formatTick: (date, unit) => {
+        const label = `${unit}:${date.getFullYear()}`;
+        labels.push(label);
+        return label;
+      },
+    });
+    run(tl);
+    expect(labels.some((l) => /^(year|month|week|day):\d{4}$/.test(l))).toBe(true);
+    // Fake measureText is 6px per character; the axis fits the longest sample label.
+    const longest = Math.max(...labels.map((l) => l.length * 6));
+    const axisWidth = (tl as unknown as { geo: { axisWidth: number } }).geo.axisWidth;
+    expect(axisWidth).toBeGreaterThanOrEqual(longest);
+    tl.destroy();
+  });
+
   it('never grows eased offsets when a frame timestamp goes backwards', () => {
     const tl = create();
     run(tl);

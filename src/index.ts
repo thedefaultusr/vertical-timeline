@@ -4,6 +4,7 @@ export { dodge } from './cards/dodge';
 export type {
   CardLod,
   ColorScheme,
+  FormatTick,
   RenderCard,
   TimeInput,
   TimelineBand,
@@ -11,5 +12,6 @@ export type {
   TimelineStoryline,
   TimelineItem,
   TimelineOptions,
+  TickUnit,
   TimelineTheme,
 } from './types';

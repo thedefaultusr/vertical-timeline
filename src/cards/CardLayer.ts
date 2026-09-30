@@ -100,6 +100,12 @@ export class CardLayer {
     return result;
   }
 
+  /** Re-renders every mounted card (e.g. after a locale change) and re-measures them in one batch. */
+  refresh(): void {
+    for (const card of this.mounted.values()) this.render(card);
+    for (const card of this.mounted.values()) card.height = card.el.offsetHeight;
+  }
+
   place(card: MountedCard, y: number): void {
     if (card.y !== y) {
       card.y = y;

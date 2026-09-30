@@ -3,12 +3,21 @@ import { generate, KEY_EVENT_COLOR, STORYLINE_LIST, type CardData } from './data
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
-const fmt = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+/** Card date formatters per locale ('' = the browser's). */
+const cardDates = new Map<string, Intl.DateTimeFormat>();
+function cardDate(): Intl.DateTimeFormat {
+  let format = cardDates.get(state.locale);
+  if (!format) {
+    format = new Intl.DateTimeFormat(state.locale || undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    cardDates.set(state.locale, format);
+  }
+  return format;
+}
 const storylineTitle = new Map(STORYLINE_LIST.map((s) => [s.id, s.title]));
 
 const renderCard: RenderCard = (item, el, lod) => {
   const data = item.data as CardData;
-  const when = `${fmt.format(item.start)}${item.end !== undefined ? ` – ${fmt.format(item.end)}` : ''}`;
+  const when = item.end !== undefined ? cardDate().formatRange(item.start, item.end) : cardDate().format(item.start);
   const date = item.storyline ? `${storylineTitle.get(item.storyline)} · ${when}` : when;
   if (lod === 'compact') {
     el.innerHTML = `<div class="vt-card__title"></div>`;
@@ -42,6 +51,8 @@ function tag(text: string, className: string): HTMLElement {
 
 const state = {
   scheme: 'auto' as ColorScheme,
+  /** BCP 47 tag; '' follows the browser. */
+  locale: '',
   events: 360,
   highlight: true,
   cardDensity: 1.25,
@@ -61,6 +72,7 @@ function create(): VerticalTimeline {
     storylines: data.storylines.map((s) => ({ ...s, visible: !state.hidden.has(s.id) })),
     renderCard,
     colorScheme: state.scheme,
+    locale: state.locale || undefined,
     cardDensity: state.cardDensity,
     maxDisplacement: state.maxDisplacement,
   };
@@ -88,6 +100,11 @@ function applyScheme(scheme: ColorScheme): void {
 }
 
 $<HTMLSelectElement>('#scheme').addEventListener('change', (e) => applyScheme((e.target as HTMLSelectElement).value as ColorScheme));
+
+$<HTMLSelectElement>('#locale').addEventListener('change', (e) => {
+  state.locale = (e.target as HTMLSelectElement).value;
+  timeline.setLocale(state.locale || undefined); // re-renders cards, which read state.locale
+});
 
 $<HTMLSelectElement>('#events').addEventListener('change', (e) => {
   state.events = Number((e.target as HTMLSelectElement).value);

@@ -45,6 +45,10 @@ export type CardLod = 'full' | 'compact';
  */
 export type RenderCard = (item: TimelineItem, el: HTMLElement, lod: CardLod) => void | (() => void);
 
+import type { FormatTick } from './core/dateFormat';
+
+export type { FormatTick, TickUnit } from './core/dateFormat';
+
 export type ColorScheme = 'auto' | 'light' | 'dark';
 
 /**
@@ -73,7 +77,15 @@ export interface TimelineOptions {
   /** 'auto' (default) follows the OS; 'light' / 'dark' force a palette. */
   colorScheme?: ColorScheme;
   minimapWidth?: number;
-  axisWidth?: number;
+  /** Width of the date axis, px, or 'auto' (default): fits the locale's widest label. */
+  axisWidth?: number | 'auto';
+  /**
+   * Locale(s) for dates on the axis and default cards, as BCP 47 tags (e.g.
+   * 'de-DE', or ['fr-CA', 'fr']). Default: the browser's language.
+   */
+  locale?: string | string[];
+  /** Custom axis label formatter; overrides the locale's default labels. */
+  formatTick?: FormatTick;
   gutterWidth?: number;
   /** Vertical gap between cards, px. */
   cardGap?: number;
