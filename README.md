@@ -270,3 +270,7 @@ Per animation frame, in this order (`src/Timeline.ts`):
 - Clusters (`+12`) on the track when zoomed out
 - Hidden DOM copy of the timeline for screen readers, and keyboard focus for items
 - Editing (drag to move / resize)
+
+## License
+
+[MIT](LICENSE)
