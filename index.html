@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vertical Timeline Playground</title>
+    <link rel="stylesheet" href="/demo/demo.css" />
+  </head>
+  <body>
+    <header>
+      <div class="bar">
+        <strong>vertical-timeline</strong>
+        <span class="hint">scroll · ⌘/ctrl + scroll or pinch to zoom · drag · click an event or a storyline title</span>
+        <span id="stats"></span>
+      </div>
+      <form class="controls" onsubmit="return false">
+        <label>Theme
+          <select id="scheme">
+            <option value="auto">Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <label>Main-lane events
+          <select id="events">
+            <option value="360">360</option>
+            <option value="2000">2,000</option>
+            <option value="10000">10,000</option>
+          </select>
+        </label>
+        <label class="check"><input id="highlight" type="checkbox" checked /> Key events in red</label>
+        <label>Card density
+          <input id="density" type="range" min="0.5" max="3" step="0.25" />
+          <output id="density-value"></output>
+        </label>
+        <label>Max displacement
+          <input id="displacement" type="range" min="0.2" max="1.5" step="0.1" />
+          <output id="displacement-value"></output>
+        </label>
+        <details>
+          <summary>Storylines</summary>
+          <ul id="storylines"></ul>
+        </details>
+      </form>
+    </header>
+    <div id="timeline"></div>
+    <script type="module" src="/demo/main.ts"></script>
+  </body>
+</html>
