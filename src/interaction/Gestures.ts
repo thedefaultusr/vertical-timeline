@@ -1,4 +1,5 @@
 import type { Viewport } from '../core/Viewport';
+import { closestWithin, EDITABLE } from './targets';
 
 const TAP_SLOP = 4;
 const VELOCITY_WINDOW = 100;
@@ -157,7 +158,8 @@ export class Gestures {
       '-': () => this.vp.zoomAt(this.vp.height / 2, 0.8),
     };
     const action = actions[e.key];
-    if (!action || (e.target as HTMLElement).closest('input, textarea, [contenteditable]')) return;
+    // Keys typed into an input inside a card are the input's.
+    if (!action || closestWithin(e.target, EDITABLE, this.el)) return;
     e.preventDefault();
     this.vp.stopInertia();
     action();

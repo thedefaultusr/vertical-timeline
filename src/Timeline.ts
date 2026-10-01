@@ -6,6 +6,7 @@ import { DateFormats, sampleTicks } from './core/dateFormat';
 import { ItemIndex } from './core/ItemIndex';
 import { Viewport } from './core/Viewport';
 import { Gestures } from './interaction/Gestures';
+import { closestWithin, INTERACTIVE } from './interaction/targets';
 import { layoutStorylines, type StorylineSpec } from './layout/storylines';
 import { assignLanes } from './layout/lanes';
 import { HiDpiCanvas } from './render/canvas';
@@ -559,10 +560,10 @@ export class VerticalTimeline {
   };
 
   private onCardClick = (e: MouseEvent): void => {
-    const target = e.target as HTMLElement;
-    if (target.closest('a, button, input, select, textarea, label, [contenteditable]')) return;
-    const id = (target.closest('.vt-card') as HTMLElement | null)?.dataset.id;
-    if (id) this.setSelected(id);
+    const card = (e.target as HTMLElement).closest<HTMLElement>('.vt-card');
+    // Links, buttons and inputs in the card handle their own clicks.
+    if (!card?.dataset.id || closestWithin(e.target, INTERACTIVE, card)) return;
+    this.setSelected(card.dataset.id);
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {

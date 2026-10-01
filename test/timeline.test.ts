@@ -225,3 +225,51 @@ describe('VerticalTimeline', () => {
     tl.destroy();
   });
 });
+
+describe('VerticalTimeline in editable content', () => {
+  /** A timeline inside a contenteditable editor, as a non-editable widget (like Obsidian's Live Preview). */
+  function createEmbedded() {
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', 'true');
+    const widget = editor.appendChild(document.createElement('div'));
+    widget.setAttribute('contenteditable', 'false');
+    document.body.append(editor);
+    const tl = new VerticalTimeline(widget, {
+      items: sampleItems(),
+      storylines: [{ id: 'ww', title: 'Storyline' }],
+      renderCard(item, el) {
+        const link = document.createElement('a');
+        link.href = '#';
+        link.textContent = item.title;
+        el.append(link, document.createElement('input'));
+      },
+    });
+    run(tl);
+    const card = internals(tl).cards.mounted.values().next().value!;
+    return { tl, editor, card };
+  }
+
+  it('selects a clicked card, unless the click is on a link or input in it', () => {
+    const { tl, editor, card } = createEmbedded();
+    card.el.querySelector('a')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    card.el.querySelector('input')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(tl.selected).toBeNull();
+    card.el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(tl.selected).toBe(card.item.id);
+    tl.destroy();
+    editor.remove();
+  });
+
+  it('handles keys, unless they are typed into an input in a card', () => {
+    const { tl, editor, card } = createEmbedded();
+    tl.setWindow(T0 + 1000 * DAY, T0 + 1100 * DAY);
+    const key = (target: Element) => target.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const before = tl.viewport.t0;
+    key(card.el.querySelector('input')!);
+    expect(tl.viewport.t0).toBe(before);
+    key(editor.querySelector('.vt-root')!);
+    expect(tl.viewport.t0).toBeGreaterThan(before);
+    tl.destroy();
+    editor.remove();
+  });
+});
