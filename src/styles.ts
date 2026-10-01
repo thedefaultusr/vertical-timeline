@@ -117,6 +117,22 @@ const CSS = `
   border-color: var(--vt-item-color, var(--vt-accent));
   box-shadow: 0 0 0 1px var(--vt-item-color, var(--vt-accent)), var(--vt-card-shadow);
 }
+.vt-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  max-width: 280px;
+  padding: 6px 10px;
+  background: var(--vt-card-bg);
+  border: 1px solid var(--vt-card-border);
+  border-left: 3px solid var(--vt-item-color, var(--vt-accent));
+  border-radius: var(--vt-card-radius);
+  box-shadow: var(--vt-card-shadow);
+  pointer-events: none;
+}
+.vt-tooltip[hidden] { display: none; }
 .vt-card__date { color: var(--vt-card-muted); font-size: 11px; }
 .vt-card__title { font-weight: 600; }
 `;

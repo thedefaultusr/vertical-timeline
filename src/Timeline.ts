@@ -1,5 +1,6 @@
-import { applyBudget, type BudgetCard } from './cards/budget';
+import { applyBudget, boundsOf, type BudgetCard } from './cards/budget';
 import { CardLayer, type CardRequest } from './cards/CardLayer';
+import { Tooltip } from './cards/Tooltip';
 import { dodge } from './cards/dodge';
 import { computeReveal } from './cards/reveal';
 import { DateFormats, sampleTicks } from './core/dateFormat';
@@ -15,6 +16,7 @@ import { Minimap } from './render/Minimap';
 import {
   AXIS_FONT_SIZE,
   connectorX,
+  spanY,
   TimelineRenderer,
   type AxisText,
   type NormalizedBand,
@@ -94,11 +96,14 @@ export class VerticalTimeline {
   private connectorRenderer: ConnectorRenderer;
   private minimap: Minimap;
   private cards: CardLayer;
+  private tooltip: Tooltip;
+  /** Pointer y over the body while hovering an event, for placing span tooltips. */
+  private hoverY = 0;
   private gestures: Gestures;
   private resizeObserver: ResizeObserver;
 
   private opts: Required<
-    Omit<TimelineOptions, 'items' | 'storylines' | 'bands' | 'markers' | 'theme' | 'colorScheme' | 'renderCard' | 'locale' | 'formatTick'>
+    Omit<TimelineOptions, 'items' | 'storylines' | 'bands' | 'markers' | 'renderTooltip' | 'theme' | 'colorScheme' | 'renderCard' | 'locale' | 'formatTick'>
   >;
   /** Canvas colours, read from CSS variables; shared by reference with the renderers. */
   private theme: TimelineTheme = { ...DEFAULT_THEME };
@@ -192,6 +197,10 @@ export class VerticalTimeline {
     const renderCard: RenderCard =
       options.renderCard ?? ((item, el, lod) => renderDefaultCard(item, el, lod, this.formats.cardDate));
     this.cards = new CardLayer(this.body, renderCard, this.invalidate, (id) => this.setHover(id));
+    this.tooltip = new Tooltip(
+      this.body,
+      options.renderTooltip ?? ((item, el) => renderDefaultCard(item, el, 'full', this.formats.cardDate)),
+    );
 
     this.gestures = new Gestures(
       this.root,
@@ -421,6 +430,7 @@ export class VerticalTimeline {
     this.gestures.destroy();
     this.root.removeEventListener('keydown', this.onKeyDown);
     this.cards.destroy();
+    this.tooltip.destroy();
     this.minimap.destroy();
     this.root.remove();
   }
@@ -642,6 +652,11 @@ export class VerticalTimeline {
     this.setHover(item);
     this.setHoverStoryline(storyline);
     this.setHoverMarker(marker);
+    if (item !== null) {
+      // A span's tooltip follows the pointer along the bar.
+      this.hoverY = e.clientY - this.body.getBoundingClientRect().top;
+      this.invalidate();
+    }
   };
 
   private onBodyPointerLeave = (): void => {
@@ -661,6 +676,29 @@ export class VerticalTimeline {
     if (id === this.hoverMarkerId) return;
     this.hoverMarkerId = id;
     this.invalidate();
+  }
+
+  /**
+   * Tooltip for the hovered event when its card isn't shown (collapsed by
+   * zoom or crowding): beside its dot, or beside a span's bar at the pointer.
+   */
+  private updateTooltip(): void {
+    const it = this.hoverId !== null ? this.index.get(this.hoverId) : undefined;
+    if (!it || this.cards.get(it.id) || this.isHidden(it)) {
+      this.tooltip.hide();
+      return;
+    }
+    const vp = this.viewport;
+    let y = vp.timeToY(it.start);
+    if (it.isSpan) {
+      const [y0, y1] = spanY(vp, it);
+      y = Math.min(Math.max(this.hoverY, y0), y1);
+    }
+    if (y < 0 || y > vp.height) {
+      this.tooltip.hide();
+      return;
+    }
+    this.tooltip.show(it, connectorX(this.geo, it) + 8, y, this.timelineCanvas.width, vp.height);
   }
 
   /** y the card's connector should point at: the date, or the visible part of a span. */
@@ -727,6 +765,7 @@ export class VerticalTimeline {
       gap: this.opts.cardGap,
       height: (c, lod) => this.cardHeight(c.item, lod),
       anchorOffset: (h) => this.anchorOffset(h),
+      bounds: this.cardBounds,
     });
     const nextLod = new Map<string, CardLod | null>();
     for (const c of dropped) nextLod.set(c.item.id, null);
@@ -742,7 +781,7 @@ export class VerticalTimeline {
       m[card.lod] = card.height;
     }
     const desired = requests.map((r, i) => r.anchor - this.anchorOffset(heights[i]));
-    const pos = dodge(desired, heights, this.opts.cardGap);
+    const pos = dodge(desired, heights, this.opts.cardGap, boundsOf(requests, heights, this.cardBounds));
 
     // 4. Ease out jumps. With a fixed card sequence (same cards, order and
     //    heights) the dodge layout is continuous, so scrolling and pushing
@@ -756,8 +795,9 @@ export class VerticalTimeline {
     if (key !== this.layoutKey && this.prevSequence.length) {
       const prev = this.prevSequence;
       const prevHeights = prev.map((p) => p.height);
-      const prevDesired = prev.map((p) => this.anchorY(p.item) - this.anchorOffset(p.height));
-      const prevPos = dodge(prevDesired, prevHeights, this.opts.cardGap);
+      const prevAnchors = prev.map((p) => ({ anchor: this.anchorY(p.item) }));
+      const prevDesired = prevAnchors.map((p, i) => p.anchor - this.anchorOffset(prevHeights[i]));
+      const prevPos = dodge(prevDesired, prevHeights, this.opts.cardGap, boundsOf(prevAnchors, prevHeights, this.cardBounds));
       const prevById = new Map<string, number>();
       for (let i = 0; i < prev.length; i++) prevById.set(prev[i].item.id, prevPos[i]);
       for (let i = 0; i < mounted.length; i++) {
@@ -796,6 +836,7 @@ export class VerticalTimeline {
     });
     this.connectorRenderer.draw(connectors, this.hoverId, this.selectedId);
     this.minimap.draw(this.shownItems, this.bands, this.shownMarkers);
+    this.updateTooltip();
 
     if (vp.t0 !== this.lastRange.start || vp.t1 !== this.lastRange.end) {
       this.lastRange = { start: vp.t0, end: vp.t1 };
@@ -809,6 +850,22 @@ export class VerticalTimeline {
     if (card && card.lod === lod) return card.height;
     return this.measured.get(item.id)?.[lod] ?? (lod === 'full' ? item.estFull : this.opts.estimatedCompactHeight);
   }
+
+  /**
+   * Limits on a card's top: it must stay within the scrollable range, from
+   * the top of the view when scrolled all the way up to its bottom when
+   * scrolled all the way down (at the current zoom). In the middle of the
+   * timeline a card off the edge of the view is a scroll away, so this only
+   * binds near the start and end of the timeline (or when zoomed out so far
+   * that there's little to scroll), where it keeps every card reachable.
+   * The range is fixed in timeline coordinates and doesn't depend on any
+   * card's date, so it never flips on or off while scrolling.
+   */
+  private cardBounds = (_anchor: number, height: number): [number, number] => {
+    const vp = this.viewport;
+    const [first, last] = vp.scrollLimits();
+    return [vp.timeToY(first), vp.timeToY(last) + vp.height - height];
+  };
 
   private anchorOffset(height: number): number {
     return Math.min(this.opts.anchorOffset, height / 2);

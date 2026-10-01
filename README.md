@@ -61,7 +61,7 @@ The container needs a height (the timeline fills it), e.g. `#timeline { height: 
 
 ## Concepts
 
-**Events** (`items`) are *momentary* (only `start`) or *spanning* (`start` and `end`). A momentary event is a dot; a spanning event is a bar in a lane beside the dots. Every event can have a card.
+**Events** (`items`) are *momentary* (only `start`) or *spanning* (`start` and `end`). A momentary event is a dot; a spanning event is a bar in a lane beside the dots. Bars are never shorter than a dot, so short spans stay visible when zoomed out (a short bar is centred on the middle of its range). Every event can have a card.
 
 **Storylines** (`storylines`) are sets of connected events, such as "World War II" or "The French Revolution". A storyline is drawn as a rail from its first event to its last, with its title running down the rail. Storylines are packed into shared lanes by time: once one ends, a later one can take its lane. Events without a storyline go in the *main lane* on the left, which spans all time. Clicking a storyline's title zooms to it.
 
@@ -76,7 +76,7 @@ markers: [
 ]
 ```
 
-**Cards** are placed as close to their date as crowding allows, joined to it by a connector. As you zoom out, lower-`priority` cards shrink to `compact` and then disappear, leaving just the dot. Clicking an event (or calling `select(id)`) always shows its card in full.
+**Cards** are placed as close to their date as crowding allows, joined to it by a connector. As you zoom out, lower-`priority` cards shrink to `compact` and then disappear, leaving just the dot. Hovering such an event shows a **tooltip** with its date and title (`renderTooltip` to customize). Clicking an event (or calling `select(id)`) always shows its card in full.
 
 **Input**
 | | |
@@ -100,6 +100,7 @@ markers: [
 | `bands` | `TimelineBand[]` | `[]` | Background ranges. |
 | `markers` | `TimelineMarker[]` | `[]` | Labelled dashed lines at a moment; see [Concepts](#concepts). |
 | `renderCard` | `RenderCard` | title + date | Renders a card's content; see [Cards](#cards). |
+| `renderTooltip` | `RenderTooltip` | date + title | Renders the tooltip of a hovered event that has no card; see [Cards](#cards). |
 | `colorScheme` | `'auto' \| 'light' \| 'dark'` | `'auto'` | `auto` follows the OS setting. |
 | `locale` | `string \| string[]` | browser language | BCP 47 tag(s) for dates on the axis and default cards, e.g. `'de-DE'`; see [Localization](#localization). |
 | `formatTick` | `(date, unit) => string` | locale default | Custom axis labels; see [Localization](#localization). |
@@ -206,6 +207,8 @@ renderCard(item, el, lod) {
 }
 ```
 
+`renderTooltip(item, el)` works the same way for the tooltip shown when hovering an event whose card isn't shown: fill `el`, optionally return a cleanup function (called when the tooltip moves to another event or hides). The tooltip has the class `vt-tooltip`, the card variables (`--vt-card-bg`, `--vt-card-border`, …) and `--vt-item-color`, and ignores pointer events.
+
 Cards are virtualized: only cards near the viewport exist, and elements are reused. Keep per-card state in your own store rather than in the element. Card height can be anything, and changes (e.g. images loading) are picked up automatically. Clicks on links, buttons and inputs inside a card work normally and don't select the card.
 
 ## Localization
@@ -275,7 +278,8 @@ All colours are CSS custom properties on `.vt-root`, **including the canvas colo
 | `.vt-card` | Every card (also `[data-id="<item id>"]`) |
 | `.vt-card--full`, `.vt-card--compact` | Level of detail |
 | `.vt-card--hover`, `.vt-card--selected` | State |
-| `.vt-card__date`, `.vt-card__title` | Parts of the default card; reusable in your own |
+| `.vt-card__date`, `.vt-card__title` | Parts of the default card (and tooltip); reusable in your own |
+| `.vt-tooltip` | Tooltip of a hovered event without a card |
 | `.vt-root`, `.vt-minimap`, `.vt-body`, `.vt-cards` | Layout containers |
 
 `theme` (constructor option) overrides canvas colours from JavaScript instead of CSS: `background`, `axisText`, `gridMajor`, `gridMinor`, `track`, `item`, `minimapDensity`, `minimapViewport`, `font`.
@@ -310,6 +314,7 @@ Per animation frame, in this order (`src/Timeline.ts`):
 1. **Viewport** (`core/Viewport.ts`): the only time ↔ y mapping. There is no native scroll anywhere; wheel, drag, pinch, keys and inertia all go through it (`interaction/Gestures.ts`), so DOM and canvases always come from the same frame.
 2. **Card selection**: items within ±1 viewport, filtered by precomputed per-item **reveal thresholds** (`cards/reveal.ts`). Each item is revealed once the zoom gives it one card height of room from the nearest more important item; those neighbours are found for all items in O(n log n) with two monotonic-stack passes over the time-sorted items. The thresholds only change with zoom, so cards don't flicker. Each card is `full`, `compact` or hidden (dot only).
 3. **Dodge** (`cards/dodge.ts`): an O(n) block-merge 1-D layout. It keeps the cards in order and stops them overlapping, while keeping the total squared distance from their dates as small as possible. The output changes continuously with the input, so cards glide during zoom.
+   - **Edges**: cards must stay within the scrollable range: from the top of the view when scrolled all the way up to its bottom when scrolled all the way down, at the current zoom. In the middle of the timeline a card past the edge of the view is a scroll away, so this only binds near the start and end (or when zoomed out so far there's little to scroll), keeping every card reachable. The range is fixed in timeline coordinates and doesn't depend on card dates, so it never flips on or off while scrolling. A merged block is clamped to its members' combined bounds, which keeps the layout optimal. If a group of cards can't fit, the budget shrinks or drops cards; a group must have room to spare before a card grows back.
    - **Budget** (`cards/budget.ts`): cards pushed further than `maxDisplacement` are demoted. In each crowded cluster of touching cards, the least important card gives way: it shrinks from full to compact, then is dropped. The order is: pinned spans (their anchor is approximate), then cards that weren't shown last frame, then shown cards dated off screen, then shown cards dated on screen. Priority decides within each tier. So scrolling never removes a card whose date is on screen. Cards being promoted must fit within 70% of the limit, which stops cards near the limit from flipping every frame.
    - **Selection**: the selected item is always a candidate, always full, and never demoted (`forced`), so clicking any event shows its card even when zoom or crowding hid it; neighbours make room with eased motion.
    - **Easing jumps**: the layout only snaps when the card sequence changes: a point's date passes a span's card pinned near the top, a card mounts, or a card is resized. On those frames the previous sequence is laid out again at the current anchors, and the difference from the new layout becomes a per-card offset that decays (τ = 100ms). Cards sliding up go behind the others (z-index 0), and cards sliding down go in front (z-index 2).

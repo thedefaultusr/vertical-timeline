@@ -1,4 +1,4 @@
-import { VerticalTimeline, type ColorScheme, type RenderCard, type TimelineOptions } from '../src';
+import { VerticalTimeline, type ColorScheme, type RenderCard, type RenderTooltip, type TimelineItem, type TimelineOptions } from '../src';
 import { generate, KEY_EVENT_COLOR, STORYLINE_LIST, type CardData } from './data';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -15,10 +15,22 @@ function cardDate(): Intl.DateTimeFormat {
 }
 const storylineTitle = new Map(STORYLINE_LIST.map((s) => [s.id, s.title]));
 
+/** "Storyline · date", or just the date. */
+function dateLine(item: TimelineItem): string {
+  const when = item.end !== undefined ? cardDate().formatRange(item.start, item.end) : cardDate().format(item.start);
+  return item.storyline ? `${storylineTitle.get(item.storyline)} · ${when}` : when;
+}
+
+/** Hovering an event without a card: its date line and title. */
+const renderTooltip: RenderTooltip = (item, el) => {
+  el.innerHTML = `<div class="vt-card__date"></div><div class="vt-card__title"></div>`;
+  el.querySelector('.vt-card__date')!.textContent = dateLine(item);
+  el.querySelector('.vt-card__title')!.textContent = item.title;
+};
+
 const renderCard: RenderCard = (item, el, lod) => {
   const data = item.data as CardData;
-  const when = item.end !== undefined ? cardDate().formatRange(item.start, item.end) : cardDate().format(item.start);
-  const date = item.storyline ? `${storylineTitle.get(item.storyline)} · ${when}` : when;
+  const date = dateLine(item);
   if (lod === 'compact') {
     el.innerHTML = `<div class="vt-card__title"></div>`;
     el.firstElementChild!.textContent = item.title;
@@ -74,6 +86,7 @@ function create(): VerticalTimeline {
     storylines: data.storylines.map((s) => ({ ...s, visible: !state.hidden.has(s.id) })),
     markers: state.markers ? data.markers : [],
     renderCard,
+    renderTooltip,
     colorScheme: state.scheme,
     locale: state.locale || undefined,
     cardDensity: state.cardDensity,

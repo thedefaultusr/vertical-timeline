@@ -6,6 +6,7 @@ export type {
   ColorScheme,
   FormatTick,
   RenderCard,
+  RenderTooltip,
   TimeInput,
   TimelineBand,
   TimelineEvents,

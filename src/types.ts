@@ -64,6 +64,13 @@ export type CardLod = 'full' | 'compact';
  */
 export type RenderCard = (item: TimelineItem, el: HTMLElement, lod: CardLod) => void | (() => void);
 
+/**
+ * Renders the content of the tooltip shown when hovering an event whose card
+ * isn't shown. May return a cleanup function, called when the tooltip moves to
+ * another event or hides.
+ */
+export type RenderTooltip = (item: TimelineItem, el: HTMLElement) => void | (() => void);
+
 import type { FormatTick } from './core/dateFormat';
 
 export type { FormatTick, TickUnit } from './core/dateFormat';
@@ -94,6 +101,8 @@ export interface TimelineOptions {
   /** Moment markers; see TimelineMarker. */
   markers?: TimelineMarker[];
   renderCard?: RenderCard;
+  /** Tooltip for hovered events without a card; default: date and title. */
+  renderTooltip?: RenderTooltip;
   theme?: Partial<TimelineTheme>;
   /** 'auto' (default) follows the OS; 'light' / 'dark' force a palette. */
   colorScheme?: ColorScheme;

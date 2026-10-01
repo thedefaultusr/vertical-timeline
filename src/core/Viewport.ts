@@ -110,7 +110,7 @@ export class Viewport {
     // Distance travelled over dt under exponential decay.
     this.panBy(this.velocity * INERTIA_TAU * (1 - decay));
     this.velocity *= decay;
-    const [lo, hi] = this.panLimits();
+    const [lo, hi] = this.scrollLimits();
     if (Math.abs(this.velocity) < INERTIA_MIN_V || this.t0 <= lo || this.t0 >= hi) this.velocity = 0;
     return this.velocity !== 0;
   }
@@ -121,8 +121,11 @@ export class Viewport {
     this.msPerPx = clampNum(this.msPerPx, this.minMsPerPx, this.maxMsPerPx);
   }
 
-  /** Allowed t0 range: the extent may scroll until 10% of the view remains. */
-  private panLimits(): [number, number] {
+  /**
+   * Allowed t0 range at the current zoom: the extent may scroll until 10% of
+   * the view remains (or, if it fits in the view, stays fully visible).
+   */
+  scrollLimits(): [number, number] {
     const span = this.height * this.msPerPx;
     const pad = span * 0.1;
     const lo = this.min - span + pad;
@@ -135,7 +138,7 @@ export class Viewport {
   }
 
   private clamp(): void {
-    const [lo, hi] = this.panLimits();
+    const [lo, hi] = this.scrollLimits();
     this.t0 = clampNum(this.t0, lo, hi);
   }
 }

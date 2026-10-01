@@ -28,6 +28,8 @@ export interface BudgetOptions<T extends BudgetCard> {
   gap: number;
   height: (card: T, lod: CardLod) => number;
   anchorOffset: (height: number) => number;
+  /** Limits on a card's top position, given its anchor and height (e.g. the scrollable range). */
+  bounds?: (anchor: number, height: number) => [lo: number, hi: number];
 }
 
 const LOD_RANK = { none: 0, compact: 1, full: 2 } as const;
@@ -51,7 +53,8 @@ export function applyBudget<T extends BudgetCard>(cards: T[], opts: BudgetOption
     const n = kept.length;
     const heights = kept.map((c) => opts.height(c, c.lod));
     const desired = kept.map((c, i) => c.anchor - opts.anchorOffset(heights[i]));
-    const pos = dodge(desired, heights, opts.gap);
+    const bounds = opts.bounds && boundsOf(kept, heights, opts.bounds);
+    const pos = dodge(desired, heights, opts.gap, bounds);
 
     const victims = new Set<number>();
     for (let start = 0; start < n; ) {
@@ -66,6 +69,13 @@ export function applyBudget<T extends BudgetCard>(cards: T[], opts: BudgetOption
       const limit = promoting ? opts.budget * opts.hysteresis : opts.budget;
       let over = false;
       for (let i = start; i <= end; i++) if (Math.abs(pos[i] - desired[i]) > limit) over = true;
+      // The cluster must fit within its members' bounds; one that's growing
+      // must fit with room to spare (as with the displacement limit), so a
+      // card at the limit doesn't flip between shrinking and growing.
+      if (bounds) {
+        const room = clusterRoom(heights, opts.gap, bounds, start, end);
+        if (room < (promoting ? opts.budget * (1 - opts.hysteresis) : 0)) over = true;
+      }
       const victim = over ? leastImportant(kept, start, end) : -1;
       if (victim >= 0) victims.add(victim);
       start = end + 1;
@@ -83,6 +93,39 @@ export function applyBudget<T extends BudgetCard>(cards: T[], opts: BudgetOption
     });
   }
   return { kept, dropped };
+}
+
+/**
+ * Spare room for cluster [start, end] laid out back to back within its
+ * members' bounds: how far the cluster could move; negative if it can't fit.
+ */
+function clusterRoom(
+  heights: ArrayLike<number>,
+  gap: number,
+  bounds: { lo: ArrayLike<number>; hi: ArrayLike<number> },
+  start: number,
+  end: number,
+): number {
+  let lo = -Infinity;
+  let hi = Infinity;
+  let offset = 0;
+  for (let i = start; i <= end; i++) {
+    lo = Math.max(lo, bounds.lo[i] - offset);
+    hi = Math.min(hi, bounds.hi[i] - offset);
+    offset += heights[i] + gap;
+  }
+  return hi - lo;
+}
+
+export function boundsOf(
+  cards: readonly { anchor: number }[],
+  heights: ArrayLike<number>,
+  bounds: (anchor: number, height: number) => [number, number],
+): { lo: Float64Array; hi: Float64Array } {
+  const lo = new Float64Array(cards.length);
+  const hi = new Float64Array(cards.length);
+  cards.forEach((c, i) => ([lo[i], hi[i]] = bounds(c.anchor, heights[i])));
+  return { lo, hi };
 }
 
 /**

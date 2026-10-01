@@ -74,6 +74,22 @@ interface LabelHit {
   y1: number;
 }
 
+/** Shortest a span's bar gets: a dot's height (diameter plus its 2px outline). */
+export const MIN_SPAN_HEIGHT = 2 * POINT_R + 2;
+
+/**
+ * Top and bottom y of a span's bar: its time range, but never shorter than a
+ * dot, so short spans stay visible when zoomed out. A short bar is centred on
+ * the middle of its range, like a dot on its date.
+ */
+export function spanY(vp: Viewport, it: Item): [number, number] {
+  const y0 = vp.timeToY(it.start);
+  const y1 = vp.timeToY(it.end);
+  if (y1 - y0 >= MIN_SPAN_HEIGHT) return [y0, y1];
+  const mid = (y0 + y1) / 2;
+  return [mid - MIN_SPAN_HEIGHT / 2, mid + MIN_SPAN_HEIGHT / 2];
+}
+
 /** Left x of a span's bar, or null when its lane isn't drawn. */
 export function spanX(geo: TrackGeometry, it: Item): number | null {
   const col = geo.columns[it.storyline];
@@ -267,8 +283,7 @@ export class TimelineRenderer {
         ctx.fill();
         if (selected) {
           const x = spanX(geo, it)!;
-          const y0 = vp.timeToY(it.start);
-          const y1 = Math.max(y0 + 2, vp.timeToY(it.end));
+          const [y0, y1] = spanY(vp, it);
           ctx.beginPath();
           ctx.roundRect(x - 0.5, y0 - 1.5, geo.laneWidth + 1, y1 - y0 + 3, 4);
           ctx.strokeStyle = theme.axisText;
@@ -377,8 +392,8 @@ export class TimelineRenderer {
   private spanPath(ctx: CanvasRenderingContext2D, vp: Viewport, geo: TrackGeometry, it: Item): boolean {
     const x = spanX(geo, it);
     if (x === null) return false;
-    const y0 = vp.timeToY(it.start);
-    const h = Math.max(2, vp.timeToY(it.end) - y0);
+    const [y0, y1] = spanY(vp, it);
+    const h = y1 - y0;
     const w = geo.laneWidth - 2;
     ctx.roundRect(x + 1, y0, w, h, Math.min(3, w / 2, h / 2));
     return true;
@@ -398,8 +413,7 @@ export class TimelineRenderer {
       if (it.isSpan) {
         const lx = spanX(geo, it);
         if (lx === null) continue;
-        const y0 = vp.timeToY(it.start);
-        const y1 = Math.max(y0 + 2, vp.timeToY(it.end));
+        const [y0, y1] = spanY(vp, it);
         if (x >= lx - 2 && x <= lx + geo.laneWidth + 2 && y >= y0 - 2 && y <= y1 + 2) return it.id;
       } else {
         const d = Math.hypot(x - geo.columns[it.storyline].pointX, y - vp.timeToY(it.start));
