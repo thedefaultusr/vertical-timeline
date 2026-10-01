@@ -30,6 +30,25 @@ export interface TimelineStoryline {
   visible?: boolean;
 }
 
+/**
+ * A labelled dashed line marking a moment. It starts at the line its lane's
+ * event dots sit on (its storyline's rail, or the main lane's line) and spans
+ * the full width to the right.
+ */
+export interface TimelineMarker {
+  id: string;
+  /** The moment it marks. */
+  at: TimeInput;
+  label?: string;
+  /**
+   * Storyline id: the marker takes the storyline's colour, hides with it and
+   * counts toward its time extent. Missing or unknown: a marker of its own.
+   */
+  storyline?: string;
+  /** Default: the storyline's colour, else the accent colour. */
+  color?: string;
+}
+
 export interface TimelineBand {
   start: TimeInput;
   end: TimeInput;
@@ -72,6 +91,8 @@ export interface TimelineOptions {
   /** Storylines; see TimelineStoryline. */
   storylines?: TimelineStoryline[];
   bands?: TimelineBand[];
+  /** Moment markers; see TimelineMarker. */
+  markers?: TimelineMarker[];
   renderCard?: RenderCard;
   theme?: Partial<TimelineTheme>;
   /** 'auto' (default) follows the OS; 'light' / 'dark' force a palette. */
@@ -111,6 +132,8 @@ export interface TimelineEvents {
   /** Selected item id; null when the selection is cleared. */
   select: string | null;
   rangechange: { start: number; end: number };
+  /** A marker's label was clicked; payload is the marker id. */
+  markerclick: string;
 }
 
 /** Internal, normalized item. */

@@ -12,6 +12,30 @@ export interface NormalizedBand {
   label?: string;
 }
 
+/** A moment marker, normalized. */
+export interface NormalizedMarker {
+  id: string;
+  at: number;
+  label?: string;
+  /** Index of its storyline in TrackGeometry.columns, or -1 if it has none. */
+  storyline: number;
+  /** Explicit or storyline colour; undefined falls back to the theme accent. */
+  color: string | undefined;
+}
+
+/** What to draw in a frame, besides the viewport and geometry. */
+export interface Scene {
+  bands: NormalizedBand[];
+  /** Markers to show (those of hidden storylines already removed). */
+  markers: NormalizedMarker[];
+  /** Events overlapping the viewport, in shown storylines. */
+  visible: Item[];
+  hoverId: string | null;
+  selectedId: string | null;
+  hoverStorylineId: string | null;
+  hoverMarkerId: string | null;
+}
+
 export interface TrackGeometry {
   axisWidth: number;
   laneWidth: number;
@@ -34,6 +58,11 @@ export const POINT_R = 4;
 /** Axis label font size, px; the timeline measures labels with it to size the axis. */
 export const AXIS_FONT_SIZE = 11;
 const LABEL_FONT_SIZE = 11;
+const MARKER_FONT_SIZE = 11;
+/** Marker label pill padding, px. */
+const PILL_X = 5;
+const PILL_Y = 3;
+const MARKER_DASH = [5, 4];
 /** Keep sticky storyline labels this far inside the viewport / rail ends. */
 const LABEL_INSET = 8;
 
@@ -59,10 +88,12 @@ export function connectorX(geo: TrackGeometry, it: Item): number {
   return col.laneX + lane * geo.laneWidth + geo.laneWidth - 2;
 }
 
-/** Axis, grid, bands and event markers. */
+/** Axis, grid, bands, storyline rails, moment markers, and event dots and bars. */
 export class TimelineRenderer {
   /** Storyline labels as last drawn, for hit testing. */
   private labels: LabelHit[] = [];
+  /** Marker labels as last drawn, for hit testing. */
+  private markerLabels: LabelHit[] = [];
 
   constructor(
     private canvas: HiDpiCanvas,
@@ -70,15 +101,8 @@ export class TimelineRenderer {
     private text: AxisText,
   ) {}
 
-  draw(
-    vp: Viewport,
-    geo: TrackGeometry,
-    bands: NormalizedBand[],
-    visible: Item[],
-    hoverId: string | null,
-    selectedId: string | null,
-    hoverStorylineId: string | null,
-  ): void {
+  draw(vp: Viewport, geo: TrackGeometry, scene: Scene): void {
+    const { bands, markers, visible, hoverId, selectedId, hoverStorylineId } = scene;
     const ctx = this.canvas.begin();
     const w = this.canvas.width;
     const h = this.canvas.height;
@@ -194,9 +218,11 @@ export class TimelineRenderer {
       this.labels.push({ id: col.id, x0: col.labelX - half, y0: top - 2, x1: col.labelX + half, y1: top + len + 2 });
     }
 
-    // Markers, batched into one path per colour (thousands of markers would
-    // otherwise be thousands of draw calls). Hovered / selected ones are
-    // drawn last, on top, with their own style.
+    this.drawMarkerLines(ctx, vp, geo, markers, scene.hoverMarkerId);
+
+    // Event dots and bars, batched into one path per colour (thousands of
+    // events would otherwise be thousands of draw calls). Hovered / selected
+    // ones are drawn last, on top, with their own style.
     const spans = new Map<string, Item[]>();
     const points = new Map<string, Item[]>();
     const emphasized: Item[] = [];
@@ -258,6 +284,93 @@ export class TimelineRenderer {
         ctx.stroke();
       }
     }
+
+    this.drawMarkerLabels(ctx, vp, geo, markers);
+  }
+
+  /**
+   * Where a marker's line starts: at the line its lane's event dots sit on
+   * (its storyline's rail, or the main lane's line for markers without a
+   * storyline), so it runs right from there without crossing it. Without a
+   * main lane, markers without a storyline start where the track begins.
+   */
+  private markerStart(geo: TrackGeometry, m: NormalizedMarker): number {
+    if (m.storyline >= 0) return geo.columns[m.storyline].pointX;
+    return geo.columns.find((c) => c.main && c.slot >= 0)?.pointX ?? geo.axisWidth;
+  }
+
+  /** Marker lines: dashed, from the marker's lane across the full width to the right. */
+  private drawMarkerLines(
+    ctx: CanvasRenderingContext2D,
+    vp: Viewport,
+    geo: TrackGeometry,
+    markers: NormalizedMarker[],
+    hoverMarkerId: string | null,
+  ): void {
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    ctx.setLineDash(MARKER_DASH);
+    for (const m of markers) {
+      const y = vp.timeToY(m.at);
+      if (y < -2 || y > h + 2) continue;
+      const hover = m.id === hoverMarkerId;
+      ctx.strokeStyle = m.color ?? this.theme.item;
+      ctx.globalAlpha = hover ? 1 : 0.85;
+      ctx.lineWidth = hover ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(this.markerStart(geo, m), crisp(y));
+      ctx.lineTo(w, crisp(y));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * Marker labels: a pill centred on the line, right-aligned where band
+   * labels are (just before the cards). A long label may extend left past the
+   * line's start, over other lanes (its background covers them), as far as
+   * the axis; only beyond that is it truncated. Drawn last, on top.
+   */
+  private drawMarkerLabels(ctx: CanvasRenderingContext2D, vp: Viewport, geo: TrackGeometry, markers: NormalizedMarker[]): void {
+    this.markerLabels = [];
+    ctx.font = `600 ${MARKER_FONT_SIZE}px ${this.theme.font}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const pillH = MARKER_FONT_SIZE + 2 * PILL_Y;
+    const right = geo.gridRight - 8;
+    for (const m of markers) {
+      if (!m.label) continue;
+      const y = vp.timeToY(m.at);
+      if (y < -pillH || y > this.canvas.height + pillH) continue;
+      const text = fitText(ctx, m.label, right - (geo.axisWidth + 2) - 2 * PILL_X);
+      if (!text) continue;
+      const w = ctx.measureText(text).width + 2 * PILL_X;
+      const x = right - w;
+      const top = y - pillH / 2;
+      ctx.beginPath();
+      ctx.roundRect(x, top, w, pillH, pillH / 2);
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = this.theme.background;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = m.color ?? this.theme.item;
+      ctx.stroke();
+      ctx.fillStyle = m.color ?? this.theme.item;
+      ctx.fillText(text, x + PILL_X, top + PILL_Y);
+      this.markerLabels.push({ id: m.id, x0: x, y0: top, x1: x + w, y1: top + pillH });
+    }
+  }
+
+  /** Returns the id of the marker whose label is under (x, y), if any. */
+  markerAt(x: number, y: number): string | null {
+    // Last drawn is on top.
+    for (let i = this.markerLabels.length - 1; i >= 0; i--) {
+      const l = this.markerLabels[i];
+      if (x >= l.x0 && x <= l.x1 && y >= l.y0 && y <= l.y1) return l.id;
+    }
+    return null;
   }
 
   /** Adds a span's bar to the current path; false if its lane isn't drawn. */
@@ -277,7 +390,7 @@ export class TimelineRenderer {
     return null;
   }
 
-  /** Returns the id of the event marker under (x, y), if any. */
+  /** Returns the id of the event (dot or bar) under (x, y), if any. */
   hitTest(vp: Viewport, geo: TrackGeometry, visible: Item[], x: number, y: number): string | null {
     let best: string | null = null;
     let bestD = 8;

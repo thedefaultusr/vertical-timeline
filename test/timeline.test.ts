@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it } from 'vitest';
-import { VerticalTimeline, type TimelineItem } from '../src';
+import { VerticalTimeline, type TimelineItem, type TimelineMarker } from '../src';
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2000, 0, 1);
@@ -271,5 +271,112 @@ describe('VerticalTimeline in editable content', () => {
     expect(tl.viewport.t0).toBeGreaterThan(before);
     tl.destroy();
     editor.remove();
+  });
+});
+
+describe('markers', () => {
+  interface LabelRect {
+    id: string;
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  }
+  function markerInternals(tl: VerticalTimeline) {
+    return tl as unknown as {
+      storylineSpecs: { id: string; start: number; end: number; hidden: boolean }[];
+      shownMarkers: { id: string; storyline: number }[];
+      geo: { columns: { id: string; slot: number }[] };
+      timelineRenderer: { markerLabels: LabelRect[] };
+      onTap(e: Partial<PointerEvent>): void;
+      index: object;
+      measured: Map<string, unknown>;
+    };
+  }
+
+  function createWithMarkers(markers: TimelineMarker[]): VerticalTimeline {
+    const container = document.createElement('div');
+    document.body.append(container);
+    return new VerticalTimeline(container, {
+      items: sampleItems(),
+      storylines: [
+        { id: 'ww', title: 'Storyline', color: '#8b5fb0' },
+        { id: 'quiet', title: 'Markers only', color: '#3f8f6b' },
+      ],
+      markers,
+    });
+  }
+
+  it("extends its storyline's time extent (and so the lane it reserves)", () => {
+    // The storyline's events run from day 1000 to day 1330.
+    const tl = createWithMarkers([{ id: 'm', at: T0 + 900 * DAY, label: 'Before', storyline: 'ww' }]);
+    const spec = markerInternals(tl).storylineSpecs.find((s) => s.id === 'ww')!;
+    expect(spec.start).toBe(T0 + 900 * DAY);
+    expect(spec.end).toBe(T0 + 1330 * DAY);
+    tl.destroy();
+  });
+
+  it('gives a storyline with only markers a lane, and spans the whole timeline for unknown storylines', () => {
+    const tl = createWithMarkers([
+      { id: 'q', at: T0 + 100 * DAY, storyline: 'quiet' },
+      { id: 'g', at: T0 + 200 * DAY, storyline: 'missing' },
+    ]);
+    const inner = markerInternals(tl);
+    expect(inner.storylineSpecs.find((s) => s.id === 'quiet')!.hidden).toBe(false);
+    expect(inner.geo.columns.find((c) => c.id === 'quiet')!.slot).toBeGreaterThanOrEqual(0);
+    expect(inner.shownMarkers.find((m) => m.id === 'g')!.storyline).toBe(-1);
+    tl.destroy();
+  });
+
+  it("hides a storyline's markers with it", () => {
+    const tl = createWithMarkers([
+      { id: 'in-ww', at: T0 + 1100 * DAY, storyline: 'ww' },
+      { id: 'global', at: T0 + 1100 * DAY },
+    ]);
+    const shown = () => markerInternals(tl).shownMarkers.map((m) => m.id);
+    expect(shown()).toEqual(['in-ww', 'global']);
+    tl.setStorylineVisible('ww', false);
+    expect(shown()).toEqual(['global']);
+    tl.setStorylineVisible('ww', true);
+    expect(shown()).toEqual(['in-ww', 'global']);
+    tl.destroy();
+  });
+
+  it('extends the timeline extent', () => {
+    const tl = createWithMarkers([{ id: 'late', at: T0 + 9000 * DAY }]);
+    expect(tl.viewport.extent[1]).toBeGreaterThanOrEqual(T0 + 9000 * DAY);
+    tl.destroy();
+  });
+
+  it('emits markerclick when a label is clicked, without selecting anything', () => {
+    const at = T0 + 1100 * DAY;
+    const tl = createWithMarkers([{ id: 'm', at, label: 'Turning point', storyline: 'ww' }]);
+    tl.setWindow(at - 60 * DAY, at + 60 * DAY);
+    run(tl);
+    const inner = markerInternals(tl);
+    const label = inner.timelineRenderer.markerLabels.find((l) => l.id === 'm');
+    expect(label).toBeDefined();
+
+    const clicks: string[] = [];
+    tl.on('markerclick', (id) => clicks.push(id));
+    // The body starts 56px from the left (after the minimap) in the layout stubs.
+    inner.onTap({ target: document.body, clientX: 56 + (label!.x0 + label!.x1) / 2, clientY: (label!.y0 + label!.y1) / 2 });
+    expect(clicks).toEqual(['m']);
+    expect(tl.selected).toBeNull();
+    tl.destroy();
+  });
+
+  it('replaces markers without rebuilding items or dropping measured heights', () => {
+    const tl = createWithMarkers([]);
+    tl.setWindow(T0 + 950 * DAY, T0 + 1400 * DAY);
+    run(tl);
+    const inner = markerInternals(tl);
+    const index = inner.index;
+    const measured = inner.measured.size;
+    tl.setMarkers([{ id: 'new', at: T0 + 1000 * DAY, label: 'New', storyline: 'ww' }]);
+    expect(inner.index).toBe(index);
+    expect(inner.measured.size).toBe(measured);
+    expect(inner.shownMarkers.map((m) => m.id)).toEqual(['new']);
+    tl.destroy();
   });
 });

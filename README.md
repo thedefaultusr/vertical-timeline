@@ -5,9 +5,9 @@
 
 A vertical timeline rendered on canvas, with rich HTML cards linked to their dates.
 
-- Handles thousands of events. Markers, grid, bands and connectors are drawn on canvas; only the cards near the viewport exist in the DOM.
+- Handles thousands of events. Event dots and bars, grid, bands, markers and connectors are drawn on canvas; only the cards near the viewport exist in the DOM.
 - **Rich cards**: your own HTML, or a React, Vue or Svelte component, placed next to the event's date. Cards move aside for each other, shrink or hide as you zoom out, and ease into new positions instead of jumping.
-- **Momentary and spanning events**, **background bands**, a **minimap**, and **storylines**: sets of connected events drawn as rails that reuse lanes over time.
+- **Momentary and spanning events**, **background bands**, **markers** (labelled lines at a moment), a **minimap**, and **storylines**: sets of connected events drawn as rails that reuse lanes over time.
 - Scroll, drag with inertia, and zoom with pinch or ctrl/⌘ + wheel; click to select; keyboard support.
 - Light and dark themes via CSS variables, including the canvas colours.
 - Dates in any language: axis labels and default cards use `Intl`, so month and weekday names, date order, 12- or 24-hour clock and digits follow the locale.
@@ -67,6 +67,15 @@ The container needs a height (the timeline fills it), e.g. `#timeline { height: 
 
 **Bands** are coloured background ranges (eras, recessions, etc.) with an optional label.
 
+**Markers** are labelled dashed lines at a moment, such as "Lehman Brothers collapses" or "Today". A marker line starts at its own lane, at the line the lane's event dots sit on, and spans the full width to the right, behind the cards too. Its own lane is its storyline's lane if it's assigned to one, otherwise the main lane. Its label sits centred on the line, right-aligned just before the cards like band labels; a long label may extend left past the line's start, over other lanes, as far as the axis. A marker assigned to a storyline also takes the storyline's colour, hides with it, and counts toward its time extent (the rail and "zoom to storyline" include it). Labels are drawn on top of everything; clicking one fires `markerclick`.
+
+```ts
+markers: [
+  { id: 'lehman', at: new Date(2008, 8, 15), label: 'Lehman Brothers collapses', storyline: 'gfc' },
+  { id: 'today', at: Date.now(), label: 'Today' },
+]
+```
+
 **Cards** are placed as close to their date as crowding allows, joined to it by a connector. As you zoom out, lower-`priority` cards shrink to `compact` and then disappear, leaving just the dot. Clicking an event (or calling `select(id)`) always shows its card in full.
 
 **Input**
@@ -77,6 +86,7 @@ The container needs a height (the timeline fills it), e.g. `#timeline { height: 
 | ↑ ↓, Page Up / Down, `+` / `-` | Pan / zoom (when the timeline has focus) |
 | Click an event dot or bar, or a card | Select it; click again, click empty space, or press Esc to clear |
 | Click a storyline title | Zoom to the storyline |
+| Click a marker label | Fires `markerclick` |
 | Click or drag in the minimap | Jump / scroll |
 
 ## API
@@ -88,6 +98,7 @@ The container needs a height (the timeline fills it), e.g. `#timeline { height: 
 | `items` | `TimelineItem[]` | `[]` | Events. |
 | `storylines` | `TimelineStoryline[]` | `[]` | Storylines. |
 | `bands` | `TimelineBand[]` | `[]` | Background ranges. |
+| `markers` | `TimelineMarker[]` | `[]` | Labelled dashed lines at a moment; see [Concepts](#concepts). |
 | `renderCard` | `RenderCard` | title + date | Renders a card's content; see [Cards](#cards). |
 | `colorScheme` | `'auto' \| 'light' \| 'dark'` | `'auto'` | `auto` follows the OS setting. |
 | `locale` | `string \| string[]` | browser language | BCP 47 tag(s) for dates on the axis and default cards, e.g. `'de-DE'`; see [Localization](#localization). |
@@ -131,6 +142,14 @@ interface TimelineStoryline {
   visible?: boolean;        // default true
 }
 
+interface TimelineMarker {
+  id: string;
+  at: TimeInput;            // the moment
+  label?: string;
+  storyline?: string;       // belongs to this storyline: its colour, hidden with it, part of its extent
+  color?: string;           // default: the storyline's colour, else --vt-accent
+}
+
 interface TimelineBand {
   start: TimeInput;
   end: TimeInput;
@@ -146,6 +165,7 @@ interface TimelineBand {
 | `setItems(items)` | Replace all events. Keeps the current view. |
 | `setStorylines(storylines)` | Replace storylines; events are re-assigned by their `storyline` id. |
 | `setBands(bands)` | Replace bands. |
+| `setMarkers(markers)` | Replace markers. Storyline markers can change storyline extents, and so how lanes are shared. |
 | `setWindow(start, end)` | Show the range `[start, end]` across the viewport. |
 | `select(id \| null)` | Select an event: its card is shown full even if zoom or crowding hid it, and the view scrolls to it if it's off screen. `null` clears. Unknown ids and events of hidden storylines are ignored. |
 | `selected` | The selected id, or `null` (getter). |
@@ -166,6 +186,7 @@ interface TimelineBand {
 | `select` | `string \| null` | Selection changed (click, `select()`, or the selected event's storyline was hidden). |
 | `hover` | `string \| null` | Pointer entered or left an event's dot, bar or card. |
 | `rangechange` | `{ start: number; end: number }` | The visible range changed (ms). Fires once per frame at most. |
+| `markerclick` | `string` | A marker's label was clicked; payload is the marker id. |
 
 ### Cards
 
@@ -290,11 +311,11 @@ Per animation frame, in this order (`src/Timeline.ts`):
 2. **Card selection**: items within ±1 viewport, filtered by precomputed per-item **reveal thresholds** (`cards/reveal.ts`). Each item is revealed once the zoom gives it one card height of room from the nearest more important item; those neighbours are found for all items in O(n log n) with two monotonic-stack passes over the time-sorted items. The thresholds only change with zoom, so cards don't flicker. Each card is `full`, `compact` or hidden (dot only).
 3. **Dodge** (`cards/dodge.ts`): an O(n) block-merge 1-D layout. It keeps the cards in order and stops them overlapping, while keeping the total squared distance from their dates as small as possible. The output changes continuously with the input, so cards glide during zoom.
    - **Budget** (`cards/budget.ts`): cards pushed further than `maxDisplacement` are demoted. In each crowded cluster of touching cards, the least important card gives way: it shrinks from full to compact, then is dropped. The order is: pinned spans (their anchor is approximate), then cards that weren't shown last frame, then shown cards dated off screen, then shown cards dated on screen. Priority decides within each tier. So scrolling never removes a card whose date is on screen. Cards being promoted must fit within 70% of the limit, which stops cards near the limit from flipping every frame.
-   - **Selection**: the selected item is always a candidate, always full, and never demoted (`forced`), so clicking any marker shows its card even when zoom or crowding hid it; neighbours make room with eased motion.
+   - **Selection**: the selected item is always a candidate, always full, and never demoted (`forced`), so clicking any event shows its card even when zoom or crowding hid it; neighbours make room with eased motion.
    - **Easing jumps**: the layout only snaps when the card sequence changes: a point's date passes a span's card pinned near the top, a card mounts, or a card is resized. On those frames the previous sequence is laid out again at the current anchors, and the difference from the new layout becomes a per-card offset that decays (τ = 100ms). Cards sliding up go behind the others (z-index 0), and cards sliding down go in front (z-index 2).
 4. **Cards** (`cards/CardLayer.ts`): virtualized and pooled DOM. New cards are measured in one batch, and later size changes are picked up by `ResizeObserver`. Cards are positioned only with `transform`.
-5. **Storylines** (`layout/storylines.ts`): a storyline is a set of connected events, such as "World War II". It's drawn as a rail from its first event to its last, with its events on the rail, its spanning events in lanes beside it, and its title running down the rail. The title stays visible while the rail is on screen, and clicking it zooms to fit the storyline. Storylines are packed into shared lanes by time: a storyline takes the first lane whose previous storyline has already ended, so a lane is reused once a storyline is over. Events without a storyline sit in the main lane on the left, which spans all time. Hiding a storyline frees its lane; it only re-runs the lane packing and reveal thresholds, so items and measured card heights are kept. Items take their storyline's colour.
-6. **Canvases**: axis (d3-scale picks tick positions; labels come from `core/dateFormat.ts`), grid, bands, spans and points (`render/TimelineRenderer.ts`; markers are batched into one path per colour); connectors (`render/ConnectorRenderer.ts`); and the minimap, whose density plot is cached and redrawn only when data or size changes (`render/Minimap.ts`). Colours come from the CSS variables (`styles.ts`). Canvases are re-sized when `devicePixelRatio` changes (moving to another display), via a `resolution` media query.
+5. **Storylines** (`layout/storylines.ts`): a storyline is a set of connected events, such as "World War II". It's drawn as a rail from its first event or marker to its last, with its events on the rail, its spanning events in lanes beside it, and its title running down the rail. The title stays visible while the rail is on screen, and clicking it zooms to fit the storyline. Storylines are packed into shared lanes by time: a storyline takes the first lane whose previous storyline has already ended, so a lane is reused once a storyline is over. Events without a storyline sit in the main lane on the left, which spans all time. Hiding a storyline frees its lane; it only re-runs the lane packing and reveal thresholds, so items and measured card heights are kept. Items take their storyline's colour.
+6. **Canvases**: axis (d3-scale picks tick positions; labels come from `core/dateFormat.ts`), grid, bands, storyline rails, markers, spans and points (`render/TimelineRenderer.ts`; event dots and bars are batched into one path per colour, marker labels are drawn last, on top); connectors (`render/ConnectorRenderer.ts`); and the minimap, whose density plot is cached and redrawn only when data or size changes (`render/Minimap.ts`). Colours come from the CSS variables (`styles.ts`). Canvases are re-sized when `devicePixelRatio` changes (moving to another display), via a `resolution` media query.
 
 ## Not done yet
 

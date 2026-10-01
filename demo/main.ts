@@ -55,11 +55,13 @@ const state = {
   locale: '',
   events: 360,
   highlight: true,
+  markers: true,
   cardDensity: 1.25,
   maxDisplacement: 0.5,
   hidden: new Set<string>(),
 };
 
+const DAY = 86_400_000;
 const container = $<HTMLDivElement>('#timeline');
 let data = generate(state.events, state.highlight);
 let timeline = create();
@@ -70,6 +72,7 @@ function create(): VerticalTimeline {
   const options: TimelineOptions = {
     ...data,
     storylines: data.storylines.map((s) => ({ ...s, visible: !state.hidden.has(s.id) })),
+    markers: state.markers ? data.markers : [],
     renderCard,
     colorScheme: state.scheme,
     locale: state.locale || undefined,
@@ -77,6 +80,11 @@ function create(): VerticalTimeline {
     maxDisplacement: state.maxDisplacement,
   };
   const tl = new VerticalTimeline(container, options);
+  // Clicking a marker's label zooms to the three months either side of it.
+  tl.on('markerclick', (id) => {
+    const marker = data.markers.find((m) => m.id === id);
+    if (marker) tl.setWindow(+marker.at - 91 * DAY, +marker.at + 91 * DAY);
+  });
   Object.assign(window, { timeline: tl });
   return tl;
 }
@@ -110,6 +118,11 @@ $<HTMLSelectElement>('#events').addEventListener('change', (e) => {
   state.events = Number((e.target as HTMLSelectElement).value);
   data = generate(state.events, state.highlight);
   timeline.setItems(data.items);
+});
+
+$<HTMLInputElement>('#markers').addEventListener('change', (e) => {
+  state.markers = (e.target as HTMLInputElement).checked;
+  timeline.setMarkers(state.markers ? data.markers : []);
 });
 
 $<HTMLInputElement>('#highlight').addEventListener('change', (e) => {

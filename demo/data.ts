@@ -1,9 +1,10 @@
-import type { TimelineBand, TimelineStoryline, TimelineItem } from '../src';
+import type { TimelineBand, TimelineStoryline, TimelineItem, TimelineMarker } from '../src';
 
 export interface DemoData {
   items: TimelineItem[];
   storylines: TimelineStoryline[];
   bands: TimelineBand[];
+  markers: TimelineMarker[];
 }
 
 export interface CardData {
@@ -41,6 +42,19 @@ export const BANDS: TimelineBand[] = [
   { start: Date.UTC(2007, 11, 1), end: Date.UTC(2009, 5, 30), color: 'rgba(192,98,47,0.10)', label: 'Recession' },
   { start: Date.UTC(2010, 0, 1), end: Date.UTC(2020, 0, 1), color: 'rgba(74,111,165,0.06)', label: '2010s' },
   { start: Date.UTC(2020, 2, 1), end: Date.UTC(2022, 2, 1), color: 'rgba(63,143,107,0.10)', label: 'Pandemic' },
+];
+
+/** Moments: across the whole timeline, or within a storyline's lane. */
+export const MARKERS: TimelineMarker[] = [
+  { id: 'y2k', at: Date.UTC(2000, 0, 1), label: 'Y2K' },
+  { id: 'sept11', at: Date.UTC(2001, 8, 11), label: 'September 11 attacks' },
+  { id: 'iphone', at: Date.UTC(2007, 0, 9), label: 'iPhone announced' },
+  { id: 'nasdaq-peak', at: Date.UTC(2000, 2, 10), label: 'NASDAQ peaks', storyline: 'dotcom' },
+  { id: 'genome-draft', at: Date.UTC(2000, 5, 26), label: 'First draft announced', storyline: 'genome' },
+  { id: 'iss-crew', at: Date.UTC(2000, 10, 2), label: 'First crew arrives', storyline: 'iss' },
+  { id: 'lehman', at: Date.UTC(2008, 8, 15), label: 'Lehman Brothers collapses', storyline: 'gfc' },
+  { id: 'referendum', at: Date.UTC(2016, 5, 23), label: 'Referendum', storyline: 'brexit' },
+  { id: 'who-pandemic', at: Date.UTC(2020, 2, 11), label: 'WHO declares a pandemic', storyline: 'covid' },
 ];
 
 export const STORYLINE_LIST: TimelineStoryline[] = STORYLINES.map(([id, title, color]) => ({ id, title, color }));
@@ -102,5 +116,5 @@ export function generate(mainLaneEvents: number, highlightKeyEvents: boolean): D
       items.push(event(nextId++, start, end, 30 + Math.floor(rand() * 70), { storyline }));
     }
   }
-  return { items, storylines: STORYLINE_LIST, bands: BANDS };
+  return { items, storylines: STORYLINE_LIST, bands: BANDS, markers: MARKERS };
 }

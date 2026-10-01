@@ -11,6 +11,7 @@ export type {
   TimelineEvents,
   TimelineStoryline,
   TimelineItem,
+  TimelineMarker,
   TimelineOptions,
   TickUnit,
   TimelineTheme,

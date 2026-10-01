@@ -1,6 +1,6 @@
 import type { Viewport } from '../core/Viewport';
 import type { Item, TimelineTheme } from '../types';
-import type { NormalizedBand } from './TimelineRenderer';
+import type { NormalizedBand, NormalizedMarker } from './TimelineRenderer';
 import { HiDpiCanvas } from './canvas';
 
 /**
@@ -35,9 +35,9 @@ export class Minimap {
     if (this.canvas.resize(width, height)) this.cacheValid = false;
   }
 
-  /** `items`: the items to plot (those in shown storylines). */
-  draw(items: readonly Item[], bands: NormalizedBand[]): void {
-    if (!this.cacheValid) this.renderCache(items, bands);
+  /** `items` / `markers`: what to plot (those in shown storylines). */
+  draw(items: readonly Item[], bands: NormalizedBand[], markers: readonly NormalizedMarker[]): void {
+    if (!this.cacheValid) this.renderCache(items, bands, markers);
     const ctx = this.canvas.begin();
     const { width, height } = this.canvas;
     ctx.drawImage(this.cache, 0, 0, width, height);
@@ -68,7 +68,7 @@ export class Minimap {
     return min + (y / this.canvas.height) * (max - min);
   }
 
-  private renderCache(items: readonly Item[], bands: NormalizedBand[]): void {
+  private renderCache(items: readonly Item[], bands: NormalizedBand[], markers: readonly NormalizedMarker[]): void {
     const { width, height } = this.canvas;
     const dpr = this.canvas.el.width / Math.max(1, width);
     this.cache.width = this.canvas.el.width;
@@ -104,6 +104,12 @@ export class Minimap {
       // sqrt keeps sparse regions visible next to dense ones.
       const w = Math.max(1, Math.sqrt(bins[i] / peak) * maxW);
       ctx.fillRect((width - w) / 2, i * 2, w, 2);
+    }
+
+    // Markers: thin full-width lines, on top of the density plot.
+    for (const m of markers) {
+      ctx.fillStyle = m.color ?? this.theme.item;
+      ctx.fillRect(0, Math.round(this.timeToY(m.at)), width, 1);
     }
     this.cacheValid = true;
   }

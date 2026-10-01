@@ -18,6 +18,7 @@ import {
   TimelineRenderer,
   type AxisText,
   type NormalizedBand,
+  type NormalizedMarker,
   type TrackGeometry,
 } from './render/TimelineRenderer';
 import { injectStyles, THEME_VARS } from './styles';
@@ -31,6 +32,7 @@ import type {
   TimelineEvents,
   TimelineStoryline,
   TimelineItem,
+  TimelineMarker,
   TimelineOptions,
   TimelineTheme,
 } from './types';
@@ -96,7 +98,7 @@ export class VerticalTimeline {
   private resizeObserver: ResizeObserver;
 
   private opts: Required<
-    Omit<TimelineOptions, 'items' | 'storylines' | 'bands' | 'theme' | 'colorScheme' | 'renderCard' | 'locale' | 'formatTick'>
+    Omit<TimelineOptions, 'items' | 'storylines' | 'bands' | 'markers' | 'theme' | 'colorScheme' | 'renderCard' | 'locale' | 'formatTick'>
   >;
   /** Canvas colours, read from CSS variables; shared by reference with the renderers. */
   private theme: TimelineTheme = { ...DEFAULT_THEME };
@@ -113,6 +115,11 @@ export class VerticalTimeline {
   private pixelRatioQuery: MediaQueryList | null = null;
   private index = new ItemIndex([]);
   private bands: NormalizedBand[] = [];
+  private rawMarkers: TimelineMarker[] = [];
+  private markers: NormalizedMarker[] = [];
+  /** Markers not in hidden storylines. */
+  private shownMarkers: NormalizedMarker[] = [];
+  private hoverMarkerId: string | null = null;
   private storylines: TimelineStoryline[] = [];
   private hiddenStorylines = new Set<string>();
   private rawItems: TimelineItem[] = [];
@@ -205,6 +212,7 @@ export class VerticalTimeline {
     this.setBands(options.bands ?? []);
     this.storylines = options.storylines ?? [];
     for (const s of this.storylines) if (s.visible === false) this.hiddenStorylines.add(s.id);
+    this.rawMarkers = options.markers ?? [];
     this.setItems(options.items ?? []);
     this.layout();
     const extent = this.index.extent;
@@ -255,24 +263,14 @@ export class VerticalTimeline {
     });
     if (!normalized.length) mainLane();
 
-    // Each storyline's extent runs from its first event to its last; span
-    // lanes are packed within each storyline.
+    // Span lanes are packed within each storyline.
     const byStoryline = specs.map((): Item[] => []);
     for (const it of normalized) byStoryline[it.storyline].push(it);
-    byStoryline.forEach((list, i) => {
-      const spec = specs[i];
-      spec.laneCount = assignLanes(list);
-      if (spec.main) return;
-      for (const it of list) {
-        spec.start = Math.min(spec.start, it.start);
-        spec.end = Math.max(spec.end, it.end);
-      }
-    });
-    // Storylines without events take no lane.
-    for (const spec of specs) if (!spec.main && spec.start > spec.end) spec.hidden = true;
+    byStoryline.forEach((list, i) => (specs[i].laneCount = assignLanes(list)));
     this.storylineSpecs = specs;
 
     this.index = new ItemIndex(normalized);
+    this.updateStorylineExtents();
     this.measured.clear();
     this.lastLod.clear();
     if (this.selectedId !== null && !this.index.get(this.selectedId)) this.setSelected(null);
@@ -294,9 +292,20 @@ export class VerticalTimeline {
     else this.hiddenStorylines.add(id);
     // Only visibility changed: items, lanes and measured card heights stay.
     for (const spec of this.storylineSpecs) {
-      // A storyline without events stays hidden (it takes no lane).
+      // A storyline without events or markers stays hidden (it takes no lane).
       if (spec.id === id && !spec.main) spec.hidden = !visible || spec.start > spec.end;
     }
+    this.applyVisibility();
+  }
+
+  /**
+   * Replaces the moment markers. A marker assigned to a storyline extends that
+   * storyline's time extent, so it may change which lanes storylines share.
+   */
+  setMarkers(markers: TimelineMarker[]): void {
+    this.rawMarkers = markers;
+    this.updateStorylineExtents();
+    this.updateExtent();
     this.applyVisibility();
   }
 
@@ -427,6 +436,7 @@ export class VerticalTimeline {
   /** Recomputes what depends on which storylines are shown. */
   private applyVisibility(): void {
     this.shownItems = this.index.items.filter((it) => !this.isHidden(it));
+    this.shownMarkers = this.markers.filter((m) => m.storyline < 0 || !this.storylineSpecs[m.storyline].hidden);
     // Reveal thresholds only consider shown items, so hiding a storyline gives
     // the remaining cards its room.
     computeReveal(this.shownItems, this.opts.estimatedCompactHeight, this.opts.cardDensity);
@@ -434,6 +444,45 @@ export class VerticalTimeline {
     if (selected && this.isHidden(selected)) this.setSelected(null);
     this.minimap.invalidate();
     if (this.geo) this.layout();
+  }
+
+  /**
+   * Normalizes markers and recomputes each storyline's time extent: from its
+   * first to its last event or marker. A storyline with neither takes no lane.
+   */
+  private updateStorylineExtents(): void {
+    const specs = this.storylineSpecs;
+    for (const spec of specs) {
+      if (spec.main) continue;
+      spec.start = Infinity;
+      spec.end = -Infinity;
+    }
+    const extend = (i: number, start: number, end: number) => {
+      const spec = specs[i];
+      if (spec.main) return;
+      spec.start = Math.min(spec.start, start);
+      spec.end = Math.max(spec.end, end);
+    };
+    for (const it of this.index.items) extend(it.storyline, it.start, it.end);
+
+    // Storyline specs come first, in `this.storylines` order (the main lane, if any, is last).
+    const storylineIndex = new Map(this.storylines.map((s, i) => [s.id, i]));
+    this.markers = this.rawMarkers.map((m) => {
+      const storyline = (m.storyline !== undefined ? storylineIndex.get(m.storyline) : undefined) ?? -1;
+      const at = toMs(m.at);
+      if (storyline >= 0) extend(storyline, at, at);
+      return {
+        id: m.id,
+        at,
+        label: m.label,
+        storyline,
+        color: m.color ?? (storyline >= 0 ? this.storylines[storyline].color : undefined),
+      };
+    });
+
+    for (const spec of specs) {
+      if (!spec.main) spec.hidden = this.hiddenStorylines.has(spec.id) || spec.start > spec.end;
+    }
   }
 
   private isHidden(it: Item): boolean {
@@ -455,6 +504,10 @@ export class VerticalTimeline {
     for (const b of this.bands) {
       min = Math.min(min, b.start);
       max = Math.max(max, b.end);
+    }
+    for (const m of this.markers) {
+      min = Math.min(min, m.at);
+      max = Math.max(max, m.at);
     }
     if (!Number.isFinite(min)) {
       const now = Date.now();
@@ -536,21 +589,33 @@ export class VerticalTimeline {
     this.invalidate();
   }
 
-  /** Event marker or storyline label under a point in client coordinates. */
-  private hitAt(clientX: number, clientY: number): { item: string | null; storyline: string | null } {
+  /**
+   * What's under a point in client coordinates: a marker label (drawn on top,
+   * so it wins), an event dot or bar, or a storyline title.
+   */
+  private hitAt(clientX: number, clientY: number): { item: string | null; storyline: string | null; marker: string | null } {
+    const none = { item: null, storyline: null, marker: null };
     const rect = this.body.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    if (x < 0 || x > this.geo.trackRight + 4) return { item: null, storyline: null };
+    if (x < 0 || x > this.geo.gridRight) return none;
+    // Marker labels can extend past the track into the connector gutter.
+    const marker = this.timelineRenderer.markerAt(x, y);
+    if (marker !== null) return { ...none, marker };
+    if (x > this.geo.trackRight + 4) return none;
     const item = this.timelineRenderer.hitTest(this.viewport, this.geo, this.visible, x, y);
-    return { item, storyline: item ? null : this.timelineRenderer.labelAt(x, y) };
+    return { ...none, item, storyline: item ? null : this.timelineRenderer.labelAt(x, y) };
   }
 
   private onTap = (e: PointerEvent): void => {
     const target = e.target as HTMLElement;
     // Taps on cards (touch) belong to the card's own content.
     if (target.closest('.vt-card, .vt-minimap')) return;
-    const { item: id, storyline } = this.hitAt(e.clientX, e.clientY);
+    const { item: id, storyline, marker } = this.hitAt(e.clientX, e.clientY);
+    if (marker !== null) {
+      this.emit('markerclick', marker);
+      return;
+    }
     if (storyline !== null) {
       this.focusStoryline(storyline);
       return;
@@ -572,21 +637,29 @@ export class VerticalTimeline {
 
   private onBodyPointerMove = (e: PointerEvent): void => {
     if (e.buttons || (e.target as HTMLElement).closest('.vt-card')) return;
-    const { item, storyline } = this.hitAt(e.clientX, e.clientY);
-    this.body.style.cursor = item || storyline ? 'pointer' : '';
+    const { item, storyline, marker } = this.hitAt(e.clientX, e.clientY);
+    this.body.style.cursor = item || storyline || marker ? 'pointer' : '';
     this.setHover(item);
     this.setHoverStoryline(storyline);
+    this.setHoverMarker(marker);
   };
 
   private onBodyPointerLeave = (): void => {
     this.body.style.cursor = '';
     this.setHover(null);
     this.setHoverStoryline(null);
+    this.setHoverMarker(null);
   };
 
   private setHoverStoryline(id: string | null): void {
     if (id === this.hoverStorylineId) return;
     this.hoverStorylineId = id;
+    this.invalidate();
+  }
+
+  private setHoverMarker(id: string | null): void {
+    if (id === this.hoverMarkerId) return;
+    this.hoverMarkerId = id;
     this.invalidate();
   }
 
@@ -712,9 +785,17 @@ export class VerticalTimeline {
     }
 
     // 5. Canvases, from the same viewport state as the DOM above.
-    this.timelineRenderer.draw(vp, geo, this.bands, this.visible, this.hoverId, this.selectedId, this.hoverStorylineId);
+    this.timelineRenderer.draw(vp, geo, {
+      bands: this.bands,
+      markers: this.shownMarkers,
+      visible: this.visible,
+      hoverId: this.hoverId,
+      selectedId: this.selectedId,
+      hoverStorylineId: this.hoverStorylineId,
+      hoverMarkerId: this.hoverMarkerId,
+    });
     this.connectorRenderer.draw(connectors, this.hoverId, this.selectedId);
-    this.minimap.draw(this.shownItems, this.bands);
+    this.minimap.draw(this.shownItems, this.bands, this.shownMarkers);
 
     if (vp.t0 !== this.lastRange.start || vp.t1 !== this.lastRange.end) {
       this.lastRange = { start: vp.t0, end: vp.t1 };
